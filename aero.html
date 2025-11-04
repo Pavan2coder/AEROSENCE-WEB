@@ -1,0 +1,1506 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhpmA9wjFH/l1bcBSDvPgeF2CSVGVSSaD/WA="
+          crossorigin=""/>
+          
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin=""></script>
+          
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    
+    <script>
+        const BACKEND_URL = 'http://localhost:4000'; // Update this when deploying
+        
+        // Backend API functions
+        async function sendDataToBackend(data) {
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/sensor-data`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                if (!response.ok) throw new Error('Network response was not ok');
+                return await response.json();
+            } catch (error) {
+                console.error('Error sending data to backend:', error);
+                throw error;
+            }
+        }
+
+        async function getHistoricalDataFromBackend(locationId) {
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/historical-data/${locationId}`);
+                if (!response.ok) throw new Error('Network response was not ok');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching historical data:', error);
+                throw error;
+            }
+        }
+
+        async function getPredictionsFromBackend(locationId) {
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/predictions/${locationId}`);
+                if (!response.ok) throw new Error('Network response was not ok');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching predictions:', error);
+                throw error;
+            }
+        }
+    </script>
+    
+    <title>AeroSense Dashboard</title>
+
+    <style>
+      /* =================================
+        YOUR CUSTOM CSS IS HERE
+        =================================
+      */
+
+      /* 1. Base Styles & Scrollbar */
+          body {
+              /* animated background gradient */
+              background: linear-gradient(120deg,#071028 0%, #07142a 35%, #041227 100%);
+              background-size: 300% 300%;
+              animation: bg-animate 12s ease infinite;
+              font-family: 'Inter', system-ui, sans-serif;
+          }
+
+          @keyframes bg-animate {
+              0% { background-position: 0% 50%; }
+              50% { background-position: 100% 50%; }
+              100% { background-position: 0% 50%; }
+          }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: #111827; }
+      ::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+      /* We need to manually hide/show elements with JS */
+      .hidden-portal {
+        display: none;
+      }
+      
+      /* =Container for the policymaker map */
+      #map {
+        height: 400px; /* You must set a height for the map! */
+        width: 100%;
+        border-radius: 1rem; /* 16px */
+        border: 1px solid #374151; /* gray-700 */
+        z-index: 10; /* Ensures map is clickable */
+      }
+      
+      /* DELETED: Container for the citizen map */
+      
+      /* NEW: Container for the bar chart */
+      #forecast-chart-container {
+        width: 100%;
+        height: 256px; /* 16rem / h-64 */
+        background-color: #1f2937; /* gray-700 */
+        border-radius: 0.5rem; /* rounded-lg */
+        padding: 1rem; /* p-4 */
+        border: 1px solid #374151; /* border-gray-600 */
+      }
+
+      /* =================================
+        SPLASH SCREEN CSS
+        =================================
+      */
+      .splash {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: #030712; /* gray-950 */
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        font-family: 'Inter', system-ui, sans-serif;
+        /* This transition creates the fade-out effect */
+        transition: opacity 0.75s ease-out;
+      }
+
+          .splash-logo {
+              width: 96px; /* slightly larger splash logo */
+              height: 96px;
+              object-fit: contain;
+              /* NEW: float + subtle rotate */
+              animation: float-rotate 5s ease-in-out infinite;
+              border-radius: 12px;
+              box-shadow: 0 10px 40px rgba(2,6,23,0.6);
+              background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+              padding: 8px;
+          }
+
+      .splash-title {
+        font-size: 2.25rem; /* 36px */
+        font-weight: 700;
+        color: #22d3ee; /* cyan-400 */
+        margin-top: 1rem; /* 16px */
+      }
+
+          /* Header / logo animation */
+          #site-logo {
+              border-radius: 8px;
+              box-shadow: 0 8px 28px rgba(2,6,23,0.6);
+              transition: transform 0.35s ease, filter 0.35s ease;
+              transform-origin: center;
+          }
+
+          #site-logo:hover { transform: translateY(-4px) rotate(-3deg); filter: saturate(1.1) brightness(1.05); }
+
+          /* Card subtle entrance */
+          .bg-gray-800 {
+              transition: transform 0.28s ease, box-shadow 0.28s ease;
+          }
+
+          .bg-gray-800:hover { transform: translateY(-6px); box-shadow: 0 18px 60px rgba(2,6,23,0.45); }
+
+      /* NEW: Animation keyframes for the logo float */
+      @keyframes float {
+        0%, 100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-20px);
+        }
+      }
+
+          @keyframes float-rotate {
+              0% { transform: translateY(0) rotate(0deg); }
+              50% { transform: translateY(-18px) rotate(4deg); }
+              100% { transform: translateY(0) rotate(0deg); }
+          }
+
+      /* This class will be added by JavaScript to fade out */
+      .splash-fade-out {
+        opacity: 0;
+      }
+
+      /* Hide the main app content initially */
+      #main-app {
+        opacity: 0;
+        transition: opacity 0.5s ease-in;
+      }
+
+      /* Show the main app when we add the "show" class */
+      #main-app.show {
+        opacity: 1;
+      }
+
+          /* ================================
+            Policymaker map card overlays
+            ================================ */
+          .map-card {
+              position: relative;
+              overflow: hidden;
+              border-radius: 0.75rem; /* match card rounding */
+          }
+
+          /* make the policymaker map a compact height inside the card */
+          .map-card #map {
+              height: 220px; /* compact preview height */
+              width: 100%;
+              border: none; /* card already has border */
+              border-radius: 0.5rem;
+              display: block;
+          }
+
+          /* bottom warning bar */
+          .map-bottom-warning {
+              position: absolute;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              background: #FBBF24; /* yellow-400 */
+              color: #062f1a; /* dark text for contrast */
+              padding: 10px 14px;
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 12px;
+              z-index: 1000;
+              box-shadow: 0 8px 24px rgba(11, 77, 12, 0.12);
+              transform-origin: center;
+              animation: warning-pulse 3s ease-in-out infinite;
+          }
+
+          @keyframes warning-pulse {
+              0% { transform: translateY(0); }
+              50% { transform: translateY(-2px); }
+              100% { transform: translateY(0); }
+          }
+
+          .map-bottom-warning .warning-left {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+          }
+
+          .map-bottom-warning .open-map {
+              color: #063148; /* teal-ish dark for link */
+              font-weight: 600;
+              cursor: pointer;
+          }
+
+          /* Fullscreen modal for expanded map */
+          #map-modal {
+              position: fixed;
+              inset: 0;
+              background: rgba(2,6,23,0.85);
+              display: none;
+              align-items: center;
+              justify-content: center;
+              z-index: 2000;
+          }
+
+          #map-modal.show {
+              display: flex;
+          }
+
+          #map-full {
+              width: 92vw;
+              height: 88vh;
+              border-radius: 12px;
+              overflow: hidden;
+              box-shadow: 0 12px 40px rgba(2,6,23,0.7);
+          }
+
+          /* Hide the small toolbar when modal is open using this helper class */
+          .hide-toolbar .map-toolbar { display: none !important; }
+
+      /* Search suggestions dropdown */
+      #search-suggestions { max-height: 220px; overflow-y: auto; }
+      #search-suggestions .suggestion-item { padding: 8px 10px; cursor: pointer; color: #e5e7eb; }
+      #search-suggestions .suggestion-item:hover { background: rgba(148,163,184,0.08); }
+      #search-suggestions .suggestion-title { font-weight: 600; }
+      #search-suggestions .suggestion-sub { font-size: 12px; color: #9ca3af; }
+
+    </style>
+</head>
+<body class="text-gray-100 font-sans">
+
+    <div id="splash-screen" class="splash">
+        <svg class="splash-logo" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="120" height="120" rx="14" fill="#07142a"></rect>
+          <path d="M36.13,66.16a5.2,5.2,0,0,1-3.68-8.88l24-24a5.2,5.2,0,0,1,7.36,7.36L40.49,64.92A5.17,5.17,0,0,1,36.13,66.16Z" fill="#22d3ee" opacity="0.7"></path>
+          <path d="M60.13,90.16a5.2,5.2,0,0,1-3.68-8.88l24-24a5.2,5.2,0,0,1,7.36,7.36L63.81,88.92A5.17,5.17,0,0,1,60.13,90.16Z" fill="#22d3ee" opacity="0.7"></path>
+          <path d="M84.13,66.16a5.2,5.2,0,0,1-3.68-1.52L56.49,40.68a5.2,5.2,0,0,1,7.36-7.36l24,24a5.2,5.2,0,0,1-3.68,8.88Z" fill="#22d3ee" opacity="0.7"></path>
+          <text x="60" y="105" text-anchor="middle" fill="#22d3ee" font-size="12" font-family="Inter, system-ui, sans-serif" font-weight="500">AeroSense</text>
+        </svg>
+      <h1 class="splash-title">AeroSense</h1>
+    </div>
+
+
+    <div id="main-app" class="p-4 md:p-8">
+
+      <header class="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center mb-8 pb-4 border-b border-gray-700">
+          <div class="flex items-center mb-2 sm:mb-0">
+                  <svg id="site-logo" class="w-10 h-10 mr-3" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="120" height="120" rx="14" fill="#07142a"></rect>
+                    <path d="M36.13,66.16a5.2,5.2,0,0,1-3.68-8.88l24-24a5.2,5.2,0,0,1,7.36,7.36L40.49,64.92A5.17,5.17,0,0,1,36.13,66.16Z" fill="#22d3ee" opacity="0.7"></path>
+                    <path d="M60.13,90.16a5.2,5.2,0,0,1-3.68-8.88l24-24a5.2,5.2,0,0,1,7.36,7.36L63.81,88.92A5.17,5.17,0,0,1,60.13,90.16Z" fill="#22d3ee" opacity="0.7"></path>
+                    <path d="M84.13,66.16a5.2,5.2,0,0,1-3.68-1.52L56.49,40.68a5.2,5.2,0,0,1,7.36-7.36l24,24a5.2,5.2,0,0,1-3.68,8.88Z" fill="#22d3ee" opacity="0.7"></path>
+                    <text x="60" y="105" text-anchor="middle" fill="#22d3ee" font-size="12" font-family="Inter, system-ui, sans-serif" font-weight="500">AeroSense</text>
+                  </svg>
+
+            <h1 class="text-4xl font-bold text-cyan-400">
+                AeroSense
+            </h1>
+          </div>
+          <div class="text-sm text-gray-400">
+              AI-Powered Urban Air Pollution Awareness
+          </div>
+      </header>
+
+      <div class="mb-8 flex justify-center bg-gray-800 rounded-full p-1 max-w-md mx-auto shadow-inner">
+          <button id="citizen-btn" class="w-1/2 py-2.5 rounded-full font-medium text-sm transition-all duration-300 bg-cyan-500 text-white shadow-lg">
+              Citizen Portal
+          </button>
+          <button id="policy-btn" class="w-1/2 py-2.5 rounded-full font-medium text-sm transition-all duration-300 text-gray-400 hover:bg-gray-700">
+              Policymaker Portal
+          </button>
+      </div>
+
+      <main class="max-w-7xl mx-auto">
+
+          <div id="citizen-dashboard" class="bg-gray-900 rounded-2xl p-6 shadow-2xl border border-gray-700">
+              <h2 class="text-3xl font-semibold text-cyan-300 mb-6">Citizen Dashboard</h2>
+
+              <div class="max-w-md mx-auto mb-6">
+                  <div class="flex flex-col space-y-4">
+                      <h3 class="text-xl font-semibold">Find Your Location</h3>
+                      <div class="flex">
+                          <div class="relative w-full">
+                              <input id="search-input" type="text" placeholder="E.g., Bengaluru, Chennai, Delhi..." class="w-full p-3 rounded-l-lg bg-gray-800 border border-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                              <div id="search-suggestions" class="absolute left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg hidden z-50 text-sm overflow-hidden"></div>
+                          </div>
+                          <button id="search-btn" class="bg-cyan-500 hover:bg-cyan-600 text-white p-3 rounded-r-lg font-medium transition-colors">
+                              Search
+                          </button>
+                      </div>
+                      
+                      <button id="get-location-btn" class="w-full flex items-center justify-center p-3 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium transition-colors">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 mr-2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+                          </svg>
+                          Use My Current Location
+                      </button>
+                  </div>
+              </div>
+              
+              <div class="flex items-center px-4 py-2 bg-gray-800 rounded-full text-sm border border-gray-700 mb-6 max-w-md">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 mr-2 inline-block">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+                  </svg>
+                  Showing data for: <strong id="location-name" class="ml-1">Loading...</strong>
+              </div>
+
+              <div class="grid md:grid-cols-3 gap-6">
+                  <div id="aqi-card" class="bg-gradient-to-br from-gray-700 to-gray-800 p-6 rounded-xl shadow-lg text-center transform hover:scale-[1.03] transition-transform duration-300">
+                      <div class="text-sm font-medium opacity-80 mb-2">CURRENT AQI</div>
+                      <div id="aqi-value" class="text-7xl font-bold">...</div>
+                      <div id="aqi-status" class="text-xl font-semibold mt-2">Loading...</div>
+                  </div>
+                  
+                  <div class="bg-gray-800 p-6 rounded-xl shadow-lg md:col-span-2 border border-gray-700">
+                      <h3 class="text-xl font-semibold mb-3 text-yellow-300 flex items-center">
+                          <span class="text-2xl mr-2">⚠️</span> Health Alert
+                      </h3>
+                      <p id="health-alert-text" class="text-gray-300" style="line-height: 1.6;">
+                          Fetching real-time data...
+                      </p>
+                  </div>
+
+                  <div class="bg-gray-800 p-6 rounded-xl shadow-lg md:col-span-3 border border-gray-700">
+                      <h3 class="text-xl font-semibold mb-4">Pollutant Details</h3>
+                      <div class="flex flex-wrap justify-around text-center gap-4">
+                          
+                          <div class="min-w-[80px] bg-gray-700 p-3 rounded-lg border border-gray-600">
+                              <div id="pm25-value" class="text-3xl font-bold text-cyan-400">...</div>
+                              <div class="text-sm text-gray-400">PM2.5</div>
+                          </div>
+                          <div class="min-w-[80px] bg-gray-700 p-3 rounded-lg border border-gray-600">
+                              <div id="pm10-value" class="text-3xl font-bold text-cyan-400">...</div>
+                              <div class="text-sm text-gray-400">PM10</div>
+                          </div>
+                          <div class="min-w-[80px] bg-gray-700 p-3 rounded-lg border border-gray-600">
+                              <div id="no2-value" class="text-3xl font-bold text-cyan-400">...</div>
+                              <div class="text-sm text-gray-400">NO₂</div>
+                          </div>
+                          <div class="min-w-[80px] bg-gray-700 p-3 rounded-lg border border-gray-600">
+                              <div id="o3-value" class="text-3xl font-bold text-cyan-400">...</div>
+                              <div class="text-sm text-gray-400">O₃</div>
+                          </div>
+                          <div class="min-w-[80px] bg-gray-700 p-3 rounded-lg border border-gray-600">
+                              <div id="so2-value" class="text-3xl font-bold text-cyan-400">...</div>
+                              <div class="text-sm text-gray-400">SO₂</div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </div>
+
+          <div id="policy-dashboard" class="bg-gray-900 rounded-2xl p-6 shadow-2xl border border-gray-700 hidden-portal">
+              <h2 class="text-3xl font-semibold text-indigo-300 mb-6">Policymaker Dashboard</h2>
+              <div class="grid lg:grid-cols-2 gap-6">
+                                    <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                                        <h3 class="text-xl font-semibold mb-4">Live PM2.5 Hotspot Map</h3>
+                                        <div class="map-card mt-2">
+                                            <div id="map"></div>
+
+                                            <div class="map-bottom-warning" role="status">
+                                                <div class="warning-left">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5" style="color:#063148">
+                                                        <path d="M11.29 3.86a1 1 0 011.42 0l8.29 8.29a1 1 0 01-.71 1.71H4.71a1 1 0 01-.71-1.71L11.29 3.86zM11 9v4h2V9h-2zm0 6v2h2v-2h-2z" />
+                                                    </svg>
+                                                    <div id="map-warning-text" class="text-sm font-medium">Live PM2.5 Hotspot Map</div>
+                                                </div>
+                                                <div id="open-map-btn" class="open-map text-sm">Open Map</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                  
+                  <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                      <h3 class="text-xl font-semibold mb-4">PM2.5 24-Hour Forecast (LSTM)</h3>
+                      <div id="forecast-chart-container">
+                        <canvas id="forecast-chart"></canvas>
+                      </div>
+                                        
+                                        <div id="forecast-location" class="mt-3 text-sm text-gray-300">Showing data for: <strong id="forecast-location-name">Loading...</strong></div>
+                                        <div id="realtime-charts-panel" class="mt-4 bg-gray-800 p-4 rounded-lg border border-gray-700 relative">
+                                            <div id="realtime-scroll" style="height:300px; overflow:auto; padding-right:8px;">
+                                                <canvas id="realtime-chart" style="min-height:420px; width:100%;"></canvas>
+                                            </div>
+
+                                            <div id="pm25-badge" style="position:absolute; right:12px; bottom:12px; background:#ffffff; color:#0f172a; padding:10px 14px; border-radius:12px; box-shadow:0 12px 30px rgba(2,6,23,0.45); min-width:110px; text-align:center;">
+                                                <div style="font-size:12px; color:#374151">PM2.5</div>
+                                                <div id="pm25-badge-value" style="font-size:20px; font-weight:700; margin-top:4px;">-- µg/m³</div>
+                                            </div>
+                                        </div>
+                  </div>
+
+                  <div class="bg-gray-800 p-6 rounded-xl shadow-lg lg:col-span-2 border border-gray-700">
+                      <h3 class="text-xl font-semibold mb-4">Policy Evaluation Analytics</h3>
+                      <p class="text-gray-300 mb-4">
+                          Simulated impact of "Vehicle-Free-Day" initiative in Zone A:
+                      </p>
+                      <div class="bg-green-900 border border-green-700 text-green-200 p-4 rounded-lg">
+                          Projected <strong>18% reduction</strong> in PM2.5 levels and <strong>12% reduction</strong> in NO₂.
+                      </div>
+                  </div>
+              </div>
+          </div>
+      </main>
+
+      <footer class="text-center mt-12 text-gray-500 text-sm max-w-7xl mx-auto pt-4 border-t border-gray-800">
+          Team: Diet Coke | VNRVJIET Hackathon
+      </footer>
+    
+    </div> <script>
+      // =====================================================
+      // --- 🔴🔴🔴 CRITICAL API KEY 🔴🔴🔴 ---
+      // =====================================================
+      //
+      // 1. Get your FREE key from https://openweathermap.org/
+      // 2. Paste it here to make the app work!
+      //
+      const API_KEY = "f17786cefb5c8c9b2da819bf34bafc2c"; // <--- THIS IS LINE 491
+      //
+      // =====================================================
+
+
+      // =====================================================
+      // --- GLOBAL VARIABLES ---
+      // =====================================================
+      
+      let policymakerMap = null;
+      let policymakerPollutionLayer = null; // Renamed from rain layer
+      // citizenMap and citizenMarker are removed
+      let forecastChart = null; // Variable for the bar chart
+      let historicalChart = null; // Variable for the line chart
+      let mapsInitialized = false; // Flag to run map/chart init only once
+      const hyderabadCoords = [17.3850, 78.4867]; // Default location
+
+      // =====================================================
+      // --- ON PAGE LOAD ---
+      // =====================================================
+      window.addEventListener('load', () => {
+
+        // --- SPLASH SCREEN LOGIC ---
+        const splashScreen = document.getElementById('splash-screen');
+        const mainApp = document.getElementById('main-app');
+        if (splashScreen && mainApp) {
+          setTimeout(() => {
+            splashScreen.classList.add('splash-fade-out');
+            mainApp.classList.add('show');
+            setTimeout(() => {
+              splashScreen.style.display = 'none';
+              // --- FIX: INITIALIZE CITIZEN PORTAL *AFTER* APP IS VISIBLE ---
+              initializeCitizenPortal();
+            }, 750); 
+          }, 2500); 
+        }
+
+        // --- PORTAL TOGGLE LOGIC ---
+        const citizenBtn = document.getElementById('citizen-btn');
+        const policyBtn = document.getElementById('policy-btn');
+        const citizenDashboard = document.getElementById('citizen-dashboard');
+        const policyDashboard = document.getElementById('policy-dashboard');
+
+        citizenBtn.addEventListener('click', () => {
+            citizenDashboard.classList.remove('hidden-portal');
+            policyDashboard.classList.add('hidden-portal');
+            citizenBtn.className = 'w-1/2 py-2.5 rounded-full font-medium text-sm transition-all duration-300 bg-cyan-500 text-white shadow-lg';
+            policyBtn.className = 'w-1/2 py-2.5 rounded-full font-medium text-sm transition-all duration-300 text-gray-400 hover:bg-gray-700';
+            
+            // No citizen map to fix
+        });
+
+        policyBtn.addEventListener('click', () => {
+            citizenDashboard.classList.add('hidden-portal');
+            policyDashboard.classList.remove('hidden-portal');
+            citizenBtn.className = 'w-1/2 py-2.5 rounded-full font-medium text-sm transition-all duration-300 text-gray-400 hover:bg-gray-700';
+            policyBtn.className = 'w-1/2 py-2.5 rounded-full font-medium text-sm transition-all duration-300 bg-indigo-500 text-white shadow-lg';
+        
+            // --- NEW: Initialize map & chart on first click ---
+            if (policymakerMap === null) {
+                initializePolicymakerMap(hyderabadCoords);
+            }
+            
+            // --- THE FIX ---
+            // Tell the map to recalculate its size
+            setTimeout(() => {
+                if (policymakerMap) policymakerMap.invalidateSize();
+            }, 10); // A small delay
+        });
+      });
+
+      // =====================================================
+      // --- INITIALIZE CITIZEN PORTAL ---
+      // =====================================================
+      function initializeCitizenPortal() {
+          if (mapsInitialized) return; // Only run this once
+          mapsInitialized = true;
+          
+          // Citizen Map initialization is REMOVED
+          
+          // 3. Add Search Listeners
+          const searchBtn = document.getElementById('search-btn');
+          const searchInput = document.getElementById('search-input');
+          searchBtn.addEventListener('click', searchLocation);
+          searchInput.addEventListener('keypress', (e) => {
+              if (e.key === 'Enter') {
+                  searchLocation();
+              }
+          });
+
+          // 4. Add Get Location Listener
+          const getLocationBtn = document.getElementById('get-location-btn');
+          getLocationBtn.addEventListener('click', getUserLocation);
+          
+          // 5. Map Click Listener is REMOVED
+          
+          // 6. Get user's location on load
+          getUserLocation();
+      }
+      
+      // =====================================================
+      // --- INITIALIZE POLICYMAKER MAP ---
+      // =====================================================
+      function initializePolicymakerMap(coords) {
+          policymakerMap = L.map('map').setView(coords, 10);
+
+          // Add the base OpenStreetMap tiles
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          }).addTo(policymakerMap);
+
+          // --- NEW: ADD THE REAL-TIME PM2.5 OVERLAY ---
+          policymakerPollutionLayer = L.tileLayer(`https://tile.openweathermap.org/map/pm2_5/{z}/{x}/{y}.png?appid=${API_KEY}`, {
+              attribution: 'PM2.5 Map &copy; <a href="https://openweathermap.org/">OpenWeatherMap</a>',
+              opacity: 0.8
+          }).addTo(policymakerMap);
+          
+          // We don't render the charts here anymore,
+          // they are rendered when data is fetched for the citizen portal
+      }
+
+      // =====================================================
+      // --- GET USER'S CURRENT LOCATION ---
+      // =====================================================
+      function getUserLocation() {
+          if (navigator.geolocation) {
+              updateText('location-name', 'Getting your location...');
+              const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
+              navigator.geolocation.getCurrentPosition(
+                  (position) => {
+                      // Success - use precise coordinates
+                      fetchDataForCoords(position.coords.latitude, position.coords.longitude, "Your Location");
+                  },
+                  (err) => {
+                      // Error or user denied
+                      console.warn('Geolocation error:', err);
+                      updateText('location-name', 'Could not get location. Showing Hyderabad.');
+                      fetchDataForCoords(hyderabadCoords[0], hyderabadCoords[1], "Hyderabad");
+                  },
+                  geoOptions
+              );
+          } else {
+              // Geolocation not supported by browser
+              updateText('location-name', 'Geolocation not supported. Showing Hyderabad.');
+              fetchDataForCoords(hyderabadCoords[0], hyderabadCoords[1], "Hyderabad");
+          }
+      }
+
+      // =====================================================
+      // --- SEARCH FUNCTION (Geocoding) ---
+      // =====================================================
+      async function searchLocation() {
+          const searchInput = document.getElementById('search-input');
+          const query = searchInput.value;
+          if (!query) return; // Do nothing if search is empty
+
+          updateText('location-name', `Searching for ${query}...`);
+          document.getElementById('search-suggestions').classList.add('hidden');
+          
+          try {
+              // Use OpenWeatherMap's Geocoding API
+              const geoApiUrl = `https://api.openweathermap.org/geo/1.0/direct?q=${query}&limit=1&appid=${API_KEY}`;
+              
+              const response = await fetch(geoApiUrl);
+              if (!response.ok) throw new Error('Geocoding service error');
+              
+              const data = await response.json();
+              
+              if (data && data.length > 0) {
+                  const lat = data[0].lat;
+                  const lon = data[0].lon;
+                  const name = data[0].name;
+                  // Found location, now fetch all data
+                  fetchDataForCoords(lat, lon, name);
+              } else {
+                  updateText('location-name', 'Location not found');
+              }
+          } catch (error) {
+              console.error('Error during geocoding:', error);
+              updateText('location-name', 'Search error');
+              showError("Could not find that location. Please try again.");
+          }
+      }
+      
+      // =====================================================
+      // --- MASTER DATA FETCH FUNCTION ---
+      // =====================================================
+      
+      /**
+       * This is the new master function. It fetches ALL data for a specific coordinate.
+       * 1. Current Air Pollution
+       * 2. Forecasted Air Pollution (for bar chart)
+       * 3. Historical Air Pollution (for line chart)
+       */
+      async function fetchDataForCoords(lat, lon, locationName) {
+          
+          // 0. Check for API Key first
+          if (API_KEY === "PASTE_YOUR_OPENWEATHERMAP_API_KEY_HERE" || API_KEY === "") {
+              showError("API Key is missing. Please get a free key from OpenWeatherMap and add it to the code.");
+              return;
+          }
+
+          // 1. Update UI to show loading state
+          updateText('location-name', `Loading data for ${locationName}...`);
+          updateText('forecast-location-name', `Loading forecast for ${locationName}...`);
+
+          // 2. Citizen Map Update is REMOVED
+
+          // 3. Fetch all data in parallel
+          try {
+              const [currentPollution, forecastPollution, historicalPollution] = await Promise.all([
+                  fetchCurrentPollution(lat, lon),
+                  fetchForecastPollution(lat, lon),
+                  fetchHistoricalPollution(lat, lon)
+              ]);
+
+              // 4. We have all data! Now update the entire UI.
+              
+              // Update Citizen Dashboard
+              updateCitizenDashboard(currentPollution.list[0], locationName);
+              
+              // Update Policy Dashboard Charts
+              renderForecastChart(forecastPollution.list);
+              renderHistoricalChart(historicalPollution.list);
+              
+              // Update location name text
+              updateText('location-name', locationName);
+              updateText('forecast-location-name', locationName);
+              
+              // Map popup update is REMOVED
+
+          } catch (error) {
+              console.error("Error fetching weather data:", error);
+              showError(`Failed to fetch data for ${locationName}. ${error.message}. Make sure your API key is correct.`);
+          }
+      }
+
+      // =====================================================
+      // --- API HELPER FUNCTIONS ---
+      // =====================================================
+
+      async function fetchCurrentPollution(lat, lon) {
+          try {
+              // Special handling for Delhi region
+              const isDelhi = Math.abs(lat - 28.6139) < 0.5 && Math.abs(lon - 77.2090) < 0.5;
+              
+              // Use WAQI API for Delhi data (more accurate for Indian cities)
+              if (isDelhi) {
+                  const waqiToken = '7e61b40a7630fc4a0514fd39b9218646c9428f34'; // Public demo token
+                  const waqiResponse = await fetch(`https://api.waqi.info/feed/delhi/?token=${waqiToken}`);
+                  if (waqiResponse.ok) {
+                      const waqiData = await waqiResponse.json();
+                      if (waqiData.status === 'ok' && waqiData.data) {
+                          const iaqi = waqiData.data.iaqi;
+                          return {
+                              list: [{
+                                  dt: Math.floor(Date.now() / 1000),
+                                  components: {
+                                      pm2_5: iaqi.pm25?.v * 2.25 || 200, // Convert to µg/m³
+                                      pm10: iaqi.pm10?.v * 2.5 || 350,   // Convert to µg/m³
+                                      no2: iaqi.no2?.v || 50,
+                                      o3: iaqi.o3?.v || 10,         // Morning values are typically lower
+                                      so2: iaqi.so2?.v || 20
+                                  }
+                              }]
+                          };
+                      }
+                  }
+              }
+
+              // Try central pollution control board data for Delhi
+              if (isDelhi) {
+                  try {
+                      const cpcbResponse = await fetch('https://app.cpcbccr.com/caaqms/caaqms_landing_map_all');
+                      if (cpcbResponse.ok) {
+                          const cpcbData = await cpcbResponse.json();
+                          const delhiStations = cpcbData.filter(station => 
+                              station.city === 'Delhi' && station.parameters);
+                          
+                          if (delhiStations.length > 0) {
+                              // Average readings from multiple Delhi stations
+                              const avgReadings = delhiStations.reduce((acc, station) => {
+                                  station.parameters.forEach(param => {
+                                      if (param.value && !isNaN(param.value)) {
+                                          if (!acc[param.name]) acc[param.name] = [];
+                                          acc[param.name].push(parseFloat(param.value));
+                                      }
+                                  });
+                                  return acc;
+                              }, {});
+
+                              const getAvg = arr => arr.reduce((a,b) => a + b, 0) / arr.length;
+
+                              return {
+                                  list: [{
+                                      dt: Math.floor(Date.now() / 1000),
+                                      components: {
+                                          pm2_5: avgReadings.PM2_5 ? getAvg(avgReadings.PM2_5) : 200,
+                                          pm10: avgReadings.PM10 ? getAvg(avgReadings.PM10) : 350,
+                                          no2: avgReadings.NO2 ? getAvg(avgReadings.NO2) : 50,
+                                          o3: avgReadings.O3 ? getAvg(avgReadings.O3) : 10,
+                                          so2: avgReadings.SO2 ? getAvg(avgReadings.SO2) : 20
+                                      }
+                                  }]
+                              };
+                          }
+                      }
+                  } catch (e) {
+                      console.warn('CPCB data fetch failed:', e);
+                  }
+              }
+              throw new Error('Backend data not available');
+          } catch (error) {
+              console.warn('Backend data unavailable, using OpenWeatherMap:', error);
+              // Fallback to OpenWeatherMap
+              const apiUrl = `https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${API_KEY}`;
+              const response = await fetch(apiUrl);
+              if (!response.ok) throw new Error('Failed to fetch current pollution');
+              const data = await response.json();
+              
+              // Normalize the OpenWeatherMap data
+              if (data.list && data.list[0]) {
+                  const components = data.list[0].components;
+                  // Apply EPA conversion factors for more accurate readings
+                  components.pm2_5 = components.pm2_5 * 1.0; // PM2.5 is usually reported correctly
+                  components.pm10 = components.pm10 * 0.8;   // OWM tends to overestimate PM10
+                  components.no2 = components.no2 * 1.88;   // Convert from µg/m³ to ppb
+                  components.o3 = components.o3 * 0.51;     // Convert from µg/m³ to ppb
+                  components.so2 = components.so2 * 0.38;   // Convert from µg/m³ to ppb
+              }
+              return data;
+          }
+      }
+
+      async function fetchForecastPollution(lat, lon) {
+          try {
+              // Try to get machine learning predictions from our backend
+              const response = await fetch(`${BACKEND_URL}/api/forecast`, {
+                  method: 'POST',
+                  headers: {
+                      'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                      lat,
+                      lon,
+                      hours: 24
+                  })
+              });
+              
+              if (response.ok) {
+                  const data = await response.json();
+                  if (data.points && data.points.length > 0) {
+                      // Convert backend forecast format to match our frontend format
+                      return {
+                          list: data.points.map(point => ({
+                              dt: Math.floor(Date.now()/1000) + (point.hour * 3600),
+                              components: {
+                                  pm2_5: point.pm25,
+                                  pm10: point.pm10 || point.pm25 * 1.5, // Estimate if not provided
+                                  no2: point.no2 || 0,
+                                  o3: point.o3 || 0,
+                                  so2: point.so2 || 0
+                              }
+                          }))
+                      };
+                  }
+              }
+              throw new Error('Backend forecast not available');
+          } catch (error) {
+              console.warn('Backend forecast unavailable, using OpenWeatherMap:', error);
+              // Fallback to OpenWeatherMap
+              const apiUrl = `https://api.openweathermap.org/data/2.5/air_pollution/forecast?lat=${lat}&lon=${lon}&appid=${API_KEY}`;
+              const response = await fetch(apiUrl);
+              if (!response.ok) throw new Error('Failed to fetch forecast pollution');
+              const data = await response.json();
+              
+              // Normalize the forecast data
+              if (data.list) {
+                  data.list.forEach(item => {
+                      const components = item.components;
+                      // Apply the same EPA conversion factors
+                      components.pm2_5 = components.pm2_5 * 1.0;
+                      components.pm10 = components.pm10 * 0.8;
+                      components.no2 = components.no2 * 1.88;
+                      components.o3 = components.o3 * 0.51;
+                      components.so2 = components.so2 * 0.38;
+                  });
+              }
+              return data;
+          }
+      }
+      
+      async function fetchHistoricalPollution(lat, lon) {
+          try {
+              // Try backend historical data first
+              const locationId = `${lat.toFixed(4)}_${lon.toFixed(4)}`;
+              const backendData = await getHistoricalDataFromBackend(locationId);
+              return {
+                  list: backendData.historical.map(h => ({
+                      dt: new Date(h.timestamp).getTime() / 1000,
+                      main: { aqi: h.aqi },
+                      components: h.components
+                  }))
+              };
+          } catch (error) {
+              console.warn('Backend historical data unavailable, falling back to OpenWeatherMap:', error);
+              // Fallback to OpenWeatherMap
+              const end = Math.floor(Date.now() / 1000);
+              const start = end - (24 * 60 * 60);
+              const apiUrl = `https://api.openweathermap.org/data/2.5/air_pollution/history?lat=${lat}&lon=${lon}&start=${start}&end=${end}&appid=${API_KEY}`;
+              const response = await fetch(apiUrl);
+              if (!response.ok) throw new Error('Failed to fetch historical pollution');
+              return response.json();
+          }
+      }
+
+      // =====================================================
+      // --- UI UPDATE FUNCTIONS ---
+      // =====================================================
+
+      /**
+       * Updates all the text in the Citizen Dashboard
+       */
+      function updateCitizenDashboard(data, locationName) {
+          // --- 🔴 FIX: CALCULATE AQI FROM COMPONENTS, DO NOT USE data.main.aqi ---
+          const aqi = calculateOverallAQI(data.components); 
+          const components = data.components;
+          const aqiInfo = getAqiInfo(aqi); // Pass the *calculated* AQI
+
+          // Update AQI card
+          updateText('aqi-value', aqi); // This will now be 165, not 5
+          updateText('aqi-status', aqiInfo.status);
+          const aqiCard = document.getElementById('aqi-card');
+          if (aqiCard) {
+              aqiCard.className = aqiCard.className.replace(/from-(red|orange|yellow|green|purple|gray)-(600|700|500|800|900)/g, '');
+              aqiCard.className = aqiCard.className.replace(/to-(red|orange|yellow|green|purple|gray)-(600|700|500|800|900)/g, '');
+              aqiInfo.colorClass.split(' ').forEach(cls => aqiCard.classList.add(cls));
+          }
+
+          // Update Health Alert
+          updateText('health-alert-text', aqiInfo.alert);
+
+          // Update individual pollutant values
+          updateText('pm25-value', components.pm2_5);
+          updateText('pm10-value', components.pm10);
+          updateText('no2-value', components.no2);
+          updateText('o3-value', components.o3);
+          updateText('so2-value', components.so2);
+          
+          // Update PM2.5 badge in policy portal
+          updatePm25Badge(components.pm2_5);
+      }
+
+      /**
+       * Renders the 24-hour forecast bar chart with REAL data
+       */
+      function renderForecastChart(forecastList) {
+          const ctx = document.getElementById('forecast-chart').getContext('2d');
+          
+          // --- 🔴 FIX: Forecast PM2.5, not the confusing AQI index ---
+          const forecastData = {
+              labels: [],
+              values: []
+          };
+          
+          // Get 8 data points, 3 hours apart
+          for (let i = 0; i < forecastList.length && i < 24; i += 3) {
+              const item = forecastList[i];
+              const date = new Date(item.dt * 1000);
+              forecastData.labels.push(`${date.getHours()}:00`);
+              forecastData.values.push(item.components.pm2_5); // Use pm2_5
+          }
+          
+          // Generate colors based on PM2.5 values (EPA standard)
+          const backgroundColors = forecastData.values.map(pm25 => {
+              if (pm25 <= 12) return 'rgba(74, 222, 128, 0.7)';  // Green
+              if (pm25 <= 35.4) return 'rgba(250, 204, 21, 0.7)'; // Yellow
+              if (pm25 <= 55.4) return 'rgba(249, 115, 22, 0.7)'; // Orange
+              if (pm25 <= 150.4) return 'rgba(239, 68, 68, 0.7)'; // Red
+              if (pm25 <= 250.4) return 'rgba(168, 85, 247, 0.7)'; // Purple
+              return 'rgba(140, 25, 25, 0.7)'; // Maroon
+          });
+
+          if (forecastChart) {
+              forecastChart.destroy();
+          }
+
+          forecastChart = new Chart(ctx, {
+              type: 'bar',
+              data: {
+                  labels: forecastData.labels,
+                  datasets: [{
+                      label: 'Forecasted PM2.5 (µg/m³)',
+                      data: forecastData.values,
+                      backgroundColor: backgroundColors,
+                      borderColor: 'rgba(255, 255, 255, 0.1)',
+                      borderWidth: 1
+                  }]
+              },
+              options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                      legend: { display: false },
+                      tooltip: {
+                          callbacks: {
+                              label: function(context) {
+                                  return `PM2.5: ${context.parsed.y} µg/m³`;
+                              }
+                          }
+                      }
+                  },
+                  scales: {
+                      y: {
+                          beginAtZero: true,
+                          // Removed the 1-5 scale, now it's automatic
+                          ticks: { color: '#9ca3af' },
+                          title: { display: true, text: 'PM2.5 (µg/m³)', color: '#9ca3af' },
+                          grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                      },
+                      x: {
+                          title: { display: true, text: 'Time Forecast (Next 24h)', color: '#9ca3af' },
+                          ticks: { color: '#9ca3af' },
+                          grid: { display: false }
+                      }
+                  }
+              }
+          });
+      }
+
+      /**
+       * Renders the historical PM2.5 line chart with REAL data
+       */
+      function renderHistoricalChart(historicalList) {
+          const ctx = document.getElementById('realtime-chart').getContext('2d');
+          
+          const labels = historicalList.map(item => new Date(item.dt * 1000));
+          const values = historicalList.map(item => item.components.pm2_5);
+          
+          if (historicalChart) historicalChart.destroy();
+
+          historicalChart = new Chart(ctx, {
+              type: 'line',
+              data: {
+                  labels: labels,
+                  datasets: [{
+                      label: 'PM2.5 (µg/m³)',
+                      data: values,
+                      fill: true,
+                      backgroundColor: 'rgba(16,185,129,0.08)',
+                      borderColor: 'rgba(16,185,129,0.9)',
+                      tension: 0.25,
+                      pointRadius: 2
+                  }]
+              },
+              options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  scales: {
+                      x: { 
+                          type: 'time',
+                          time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } },
+                          ticks: { color: '#9ca3af' }, 
+                          grid: { display: false } 
+                      },
+                      y: { 
+                          title: { display: true, text: 'PM2.5 (µg/m³)', color: '#9ca3af' },
+                          ticks: { color: '#9ca3af' }, 
+                          grid: { color: 'rgba(255,255,255,0.03)' } 
+                      }
+                  },
+                  plugins: { legend: { display: false } }
+              }
+          });
+      }
+
+
+      // =====================================================
+      // --- HELPER FUNCTIONS (AQI, Text, Errors) ---
+      // =====================================================
+          
+      /**
+       * --- 🔴 NEW: CONVERTS CALCULATED AQI VALUE TO STATUS ---
+       * This now uses the standard EPA ranges, not the 1-5 index
+       */
+      function getAqiInfo(aqi) {
+          if (aqi <= 50) {
+              return {
+                  status: 'Good',
+                  colorClass: 'from-green-600 to-green-700',
+                  alert: '<strong>Health Impact:</strong> Air quality is good. <br><strong>Precautions:</strong> It\'s a great day for outdoor activities. No health risks expected.'
+              };
+          } else if (aqi <= 100) {
+              return {
+                  status: 'Moderate',
+                  colorClass: 'from-yellow-500 to-yellow-600',
+                  alert: '<strong>Health Impact:</strong> Moderate. Unusually sensitive individuals may experience minor respiratory symptoms. <br><strong>Precautions:</strong> Sensitive groups (e.g., with asthma) should consider reducing heavy outdoor exertion.'
+              };
+          } else if (aqi <= 150) {
+              return {
+                  status: 'Unhealthy (SG)',
+                  colorClass: 'from-orange-600 to-orange-700',
+                  alert: '<strong>Health Impact:</strong> Unhealthy for Sensitive Groups. People with lung/heart disease, children, and older adults may experience respiratory irritation. <br><strong>Precautions:</strong> Sensitive groups must reduce prolonged outdoor exertion. Others should reduce heavy exertion.'
+              };
+          } else if (aqi <= 200) {
+              return {
+                  status: 'Unhealthy',
+                  colorClass: 'from-red-600 to-red-700',
+                  alert: '<strong>Health Impact:</strong> Unhealthy for everyone. Increased risk of respiratory issues (coughing, throat irritation) and aggravation of lung/heart conditions. <br><strong>Precautions:</strong> Everyone should reduce heavy outdoor exertion. Sensitive groups should avoid all outdoor activity.'
+              };
+          } else if (aqi <= 300) {
+              return {
+                  status: 'Very Unhealthy',
+                  colorClass: 'from-purple-600 to-purple-800',
+                  alert: '<strong>Health Impact:</strong> Very Unhealthy. Significant risk of serious health effects for everyone, including difficulty breathing and aggravation of lung or heart disease. <br><strong>Precautions:</strong> Avoid all prolonged outdoor exertion. Sensitive groups must remain indoors.'
+              };
+          } else { // 301+
+              return {
+                  status: 'Hazardous',
+                  colorClass: 'from-red-800 to-red-900',
+                  alert: '<strong>Health Impact:</strong> HAZARDOUS. Serious risk of respiratory distress for the entire population. <br><strong>Precautions:</strong> Everyone must avoid all outdoor activity. Remain indoors, keep windows closed, and consider using an air purifier.'
+              };
+          }
+      }
+      
+      /**
+       * Safely updates the text of an element
+       */
+      function updateText(elementId, value, fallback = 'N/A') {
+          const el = document.getElementById(elementId);
+          if (el) {
+              let finalValue = value;
+              if (typeof value === 'number') {
+                  // Round AQI value, but keep 1 decimal for pollutants
+                  if (elementId === 'aqi-value') {
+                    finalValue = Math.round(value);
+                  } else {
+                    finalValue = value.toFixed(1);
+                  }
+              }
+              
+              // --- MODIFIED: Use innerHTML for health alerts, innerText for all else ---
+              const safeValue = finalValue !== undefined && finalValue !== null ? finalValue : fallback;
+              if (elementId === 'health-alert-text') {
+                  el.innerHTML = safeValue;
+              } else {
+                  el.innerText = safeValue;
+              }
+              // --- END OF MODIFICATION ---
+          }
+      }
+      
+      /**
+       * Shows a general error message on the dashboard
+       */
+        function showError(message) {
+            updateText('aqi-status', 'Error');
+            updateText('health-alert-text', message);
+            updateText('location-name', 'Error loading data');
+            updateText('aqi-value', '!');
+            const aqiCard = document.getElementById('aqi-card');
+            if (aqiCard) {
+                aqiCard.className = aqiCard.className.replace(/from-(red|orange|yellow|green|purple|gray)-(600|700|500|800|900)/g, '');
+                aqiCard.className = aqiCard.className.replace(/to-(red|orange|yellow|green|purple|gray)-(600|700|500|800|900)/g, '');
+                aqiCard.classList.add('from-gray-700', 'to-gray-800');
+            }
+        }
+        
+        // =====================================================
+        // --- 🔴 NEW: EPA AQI CALCULATION FUNCTIONS ---
+        // =====================================================
+
+      /**
+       * Calculates the overall AQI by finding the worst (highest)
+       * AQI from all individual pollutants.
+       */
+      function calculateOverallAQI(components) {
+          // Initialize variables to store individual AQI values
+          let pm25_aqi = 0, pm10_aqi = 0, o3_aqi = 0, no2_aqi = 0, so2_aqi = 0;
+          
+          try {
+              // Calculate individual AQIs with error checking
+              if (typeof components.pm2_5 === 'number' && components.pm2_5 >= 0) {
+                  pm25_aqi = calculatePM25_AQI(components.pm2_5);
+              }
+              
+              if (typeof components.pm10 === 'number' && components.pm10 >= 0) {
+                  pm10_aqi = calculatePM10_AQI(components.pm10);
+              }
+              
+              if (typeof components.o3 === 'number' && components.o3 >= 0) {
+                  o3_aqi = calculateO3_AQI(components.o3);
+              }
+              
+              if (typeof components.no2 === 'number' && components.no2 >= 0) {
+                  no2_aqi = calculateNO2_AQI(components.no2);
+              }
+              
+              if (typeof components.so2 === 'number' && components.so2 >= 0) {
+                  so2_aqi = calculateSO2_AQI(components.so2);
+              }
+              
+              // Weight the AQIs based on health impact
+              const weights = {
+                  pm25: 0.5,    // PM2.5 has highest health impact
+                  pm10: 0.2,    // PM10 also significant
+                  o3: 0.15,     // Ozone
+                  no2: 0.1,     // Nitrogen dioxide
+                  so2: 0.05     // Sulfur dioxide
+              };
+              
+              // Calculate weighted average for more accurate representation
+              const weightedSum = (pm25_aqi * weights.pm25) +
+                                  (pm10_aqi * weights.pm10) +
+                                  (o3_aqi * weights.o3) +
+                                  (no2_aqi * weights.no2) +
+                                  (so2_aqi * weights.so2);
+              
+              // But still consider the maximum value to not underestimate health risks
+              const maxAQI = Math.max(pm25_aqi, pm10_aqi, o3_aqi, no2_aqi, so2_aqi);
+              
+              // Use a combination of weighted average and maximum
+              // This provides both accuracy and safety
+              return Math.round(Math.max(weightedSum, maxAQI * 0.8));
+              
+          } catch (error) {
+              console.error('Error calculating AQI:', error);
+              // Fallback to simpler calculation if there's an error
+              const validAQIs = [pm25_aqi, pm10_aqi, o3_aqi, no2_aqi, so2_aqi].filter(aqi => aqi > 0);
+              return validAQIs.length > 0 ? Math.max(...validAQIs) : 0;
+          }
+      }
+
+      /**
+       * General formula for calculating AQI
+       */
+      function calculateEPA_AQI(Cp, I_low, I_high, BP_low, BP_high) {
+          // (I_high - I_low) / (BP_high - BP_low) * (Cp - BP_low) + I_low
+          const aqi = ((I_high - I_low) / (BP_high - BP_low)) * (Cp - BP_low) + I_low;
+          return Math.round(aqi);
+      }
+
+      function getPM25Breakpoints(concentration) {
+          // Using Indian CPCB AQI standards
+          if (concentration > 250) return [401, 500, 250, 999];    // Severe
+          else if (concentration > 120) return [301, 400, 120, 250]; // Very Poor
+          else if (concentration > 90) return [201, 300, 90, 120];    // Poor
+          else if (concentration > 60) return [101, 200, 60, 90];    // Moderate
+          else if (concentration > 30) return [51, 100, 30, 60];     // Satisfactory
+          else if (concentration >= 0) return [0, 50, 0, 30];       // Good
+          return null;
+      }
+
+      function getPM10Breakpoints(concentration) {
+          if (concentration > 425) return [301, 500, 425, 604]; // Using 500 as upper for 401-500
+          else if (concentration > 355) return [201, 300, 355, 424];
+          else if (concentration > 255) return [151, 200, 255, 354];
+          else if (concentration > 155) return [101, 150, 155, 254];
+          else if (concentration > 55) return [51, 100, 55, 154];
+          else if (concentration >= 0) return [0, 50, 0, 54];
+          return null;
+      }
+
+      function getO3Breakpoints(concentration_ppm) {
+          const concentration_ppb = concentration_ppm * 1000;
+          if (concentration_ppb > 200) return [201, 300, 201, 374]; // 8-hr
+          else if (concentration_ppb > 165) return [151, 200, 165, 200]; // 8-hr
+          else if (concentration_ppb > 125) return [101, 150, 125, 164]; // 8-hr
+          else if (concentration_ppb > 71) return [51, 100, 71, 124]; // 8-hr
+          else if (concentration_ppb >= 0) return [0, 50, 0, 70]; // 8-hr
+          return null;
+      }
+      
+      function getNO2Breakpoints(concentration_ppb) {
+          if (concentration_ppb > 1250) return [301, 500, 1250, 2049]; // Using 500 as upper
+          else if (concentration_ppb > 650) return [201, 300, 650, 1249];
+          else if (concentration_ppb > 361) return [151, 200, 361, 649];
+          else if (concentration_ppb > 101) return [101, 150, 101, 360];
+          else if (concentration_ppb > 54) return [51, 100, 54, 100];
+          else if (concentration_ppb >= 0) return [0, 50, 0, 53];
+          return null;
+      }
+      
+      function getSO2Breakpoints(concentration_ppb) {
+          if (concentration_ppb > 605) return [301, 500, 605, 1004]; // Using 500 as upper
+          else if (concentration_ppb > 305) return [201, 300, 305, 604];
+          else if (concentration_ppb > 186) return [151, 200, 186, 304];
+          else if (concentration_ppb > 76) return [101, 150, 76, 185];
+          else if (concentration_ppb > 36) return [51, 100, 36, 75];
+          else if (concentration_ppb >= 0) return [0, 50, 0, 35];
+          return null;
+      }
+      
+      // Individual AQI calculation functions
+      function calculatePM25_AQI(Cp) {
+          if (Cp === undefined) return 0;
+          const breakpoints = getPM25Breakpoints(Cp);
+          if (!breakpoints) return 0;
+          return calculateEPA_AQI(Cp, breakpoints[0], breakpoints[1], breakpoints[2], breakpoints[3]);
+      }
+      
+      function calculatePM10_AQI(Cp) {
+          if (Cp === undefined) return 0;
+          const breakpoints = getPM10Breakpoints(Cp);
+          if (!breakpoints) return 0;
+          return calculateEPA_AQI(Cp, breakpoints[0], breakpoints[1], breakpoints[2], breakpoints[3]);
+      }
+      
+      function calculateO3_AQI(Cp) {
+          if (Cp === undefined) return 0;
+          const breakpoints = getO3Breakpoints(Cp); // OWM provides O3 in ppb
+          if (!breakpoints) return 0;
+          return calculateEPA_AQI(Cp, breakpoints[0], breakpoints[1], breakpoints[2], breakpoints[3]);
+      }
+      
+      function calculateNO2_AQI(Cp) {
+          if (Cp === undefined) return 0;
+          const breakpoints = getNO2Breakpoints(Cp); // OWM provides NO2 in ppb
+          if (!breakpoints) return 0;
+          return calculateEPA_AQI(Cp, breakpoints[0], breakpoints[1], breakpoints[2], breakpoints[3]);
+      }
+      
+      function calculateSO2_AQI(Cp) {
+          if (Cp === undefined) return 0;
+          const breakpoints = getSO2Breakpoints(Cp); // OWM provides SO2 in ppb
+          if (!breakpoints) return 0;
+          return calculateEPA_AQI(Cp, breakpoints[0], breakpoints[1], breakpoints[2], breakpoints[3]);
+      }
+        
+    </script>
+
+        <div id="map-modal" aria-hidden="true">
+            <div id="map-full"></div>
+        </div>
+
+        <script>
+            // Fullscreen map variables
+            let fullMap = null;
+            let fullMapInitialized = false;
+
+            // Open full map modal and initialize Leaflet map inside it
+            function openFullMap() {
+                const modal = document.getElementById('map-modal');
+                const mapFullEl = document.getElementById('map-full');
+                const mapCard = document.querySelector('.map-card');
+
+                if (!modal || !mapFullEl) return;
+
+                modal.classList.add('show');
+                // Hide the small toolbar by adding a helper class to the card
+                if (mapCard) mapCard.classList.add('hide-toolbar');
+
+                // Initialize the full map once
+                if (!fullMapInitialized) {
+                    fullMap = L.map('map-full').setView(hyderabadCoords, 10);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
+                    }).addTo(fullMap);
+
+                    // NEW: Add PM2.5 overlay (same as small map)
+                    L.tileLayer(`https://tile.openweathermap.org/map/pm2_5/{z}/{x}/{y}.png?appid=${API_KEY}`, {
+                        attribution: 'PM2.5 Map &copy; <a href="https://openweathermap.org/">OpenWeatherMap</a>',
+                        opacity: 0.8
+                    }).addTo(fullMap);
+
+                    fullMapInitialized = true;
+                } else {
+                    // If already created, just ensure size is recalculated
+                    setTimeout(() => { if (fullMap) fullMap.invalidateSize(); }, 50);
+                }
+
+                // Close modal when clicking outside the map-full element
+                modal.addEventListener('click', function onModalClick(e) {
+                    if (e.target === modal) {
+                        closeFullMap();
+                        modal.removeEventListener('click', onModalClick);
+                    }
+                });
+
+                // Close on Escape
+                function onKey(e) {
+                    if (e.key === 'Escape') {
+                        closeFullMap();
+                        document.removeEventListener('keydown', onKey);
+                    }
+                }
+                document.addEventListener('keydown', onKey);
+            }
+
+            function closeFullMap() {
+                const modal = document.getElementById('map-modal');
+                const mapCard = document.querySelector('.map-card');
+                if (!modal) return;
+                modal.classList.remove('show');
+                if (mapCard) mapCard.classList.remove('hide-toolbar');
+            }
+
+            // Attach click handler to Open Map button
+            document.addEventListener('click', (e) => {
+                const target = e.target;
+                if (target && (target.id === 'open-map-btn' || target.closest('#open-map-btn'))) {
+                    openFullMap();
+                }
+            });
+    
+                // -----------------------------
+                // Search suggestions (Nominatim)
+                // -----------------------------
+                function debounce(fn, wait) {
+                    let t = null;
+                    return function(...args) {
+                        clearTimeout(t);
+                        t = setTimeout(() => fn.apply(this, args), wait);
+                    };
+                }
+
+                const suggestionsEl = document.getElementById('search-suggestions');
+                const searchInputEl = document.getElementById('search-input');
+
+                async function fetchSuggestions(query) {
+                    if (!query || query.length < 2) {
+                        suggestionsEl.classList.add('hidden');
+                        suggestionsEl.innerHTML = '';
+                        return;
+                    }
+                    
+                    // Check for API key
+                    if (API_KEY === "PASTE_YOUR_OPENWEATHERMAP_API_KEY_HERE" || API_KEY === "") {
+                        suggestionsEl.classList.remove('hidden');
+                        suggestionsEl.innerHTML = `<div class="suggestion-item"><div class="suggestion-sub">Please add API key to enable search.</div></div>`;
+                        return;
+                    }
+
+                    try {
+                        const url = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(query)}&limit=5&appid=${API_KEY}`;
+                        const resp = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+                        if (!resp.ok) throw new Error('Geocoding failed');
+                        const data = await resp.json();
+
+                        if (!data || data.length === 0) {
+                            suggestionsEl.classList.add('hidden');
+                            suggestionsEl.innerHTML = '';
+                            return;
+                        }
+
+                        suggestionsEl.innerHTML = data.map(item => {
+                            const title = item.name;
+                            const sub = [item.state, item.country].filter(Boolean).join(', ');
+                            return `<div class="suggestion-item" data-lat="${item.lat}" data-lon="${item.lon}" data-name="${item.name}">
+                                        <div class="suggestion-title">${title}</div>
+                                        <div class="suggestion-sub">${sub}</div>
+                                    </div>`;
+                        }).join('');
+
+                        suggestionsEl.classList.remove('hidden');
+                    } catch (err) {
+                        console.error('Suggestion error', err);
+                        suggestionsEl.classList.add('hidden');
+                        suggestionsEl.innerHTML = '';
+                    }
+                }
+
+                const debouncedFetchSuggestions = debounce((q) => fetchSuggestions(q), 300);
+
+                if (searchInputEl) {
+                    searchInputEl.addEventListener('input', (e) => {
+                        debouncedFetchSuggestions(e.target.value);
+                    });
+
+                    // Keyboard: Enter triggers search
+                    searchInputEl.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') {
+                            document.getElementById('search-btn').click();
+                            suggestionsEl.classList.add('hidden');
+                        }
+                    });
+                }
+
+                // Click on suggestion -> fetch AQI immediately
+                document.addEventListener('click', (e) => {
+                    const s = e.target.closest && e.target.closest('.suggestion-item');
+                    if (s && s.dataset) {
+                        const lat = s.dataset.lat;
+                        const lon = s.dataset.lon;
+                        const name = s.dataset.name;
+                        
+                        // Don't do anything if it's just the API key warning
+                        if (!lat) return; 
+                        
+                        // Set input value and hide suggestions
+                        if (searchInputEl) searchInputEl.value = name;
+                        suggestionsEl.classList.add('hidden');
+                        // Fetch AQI for selected location
+                        if (lat && lon) fetchDataForCoords(lat, lon, name);
+                    }
+                });
+
+                // Hide suggestions when clicking outside
+                document.addEventListener('click', (e) => {
+                    if (!e.target.closest || (!e.target.closest('#search-input') && !e.target.closest('#search-suggestions'))) {
+                        if (suggestionsEl) suggestionsEl.classList.add('hidden');
+                    }
+                });
+
+                        // -----------------------------
+                        // Real-time chart (scrollable panel) helper
+                        // -----------------------------
+
+                        // Helper: update PM2.5 badge from fetched data
+                        function updatePm25Badge(value) {
+                            const el = document.getElementById('pm25-badge-value');
+                            if (!el) return;
+                            if (value === undefined || value === null) {
+                                el.innerText = '-- µg/m³';
+                            } else {
+                                el.innerText = `${Math.round(value)} µg/m³`;
+                            }
+                        }
+        </script>
+
+</body>
+</html>
